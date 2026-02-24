@@ -7,83 +7,69 @@ pipeline {
 
   options {
     timestamps()
+    disableConcurrentBuilds()
   }
 
   stages {
-
     stage('Checkout') {
       steps {
         checkout scm
       }
     }
 
-    stage('JaCoCo Code Coverage') {
+    stage('Build + Test') {
       steps {
-        powershell '''
-          $initFile = "$env:WORKSPACE\\jenkins-jacoco.gradle"
-
-@"
-allprojects {
-  apply plugin: 'jacoco'
-
-  tasks.withType(Test) {
-    finalizedBy 'jacocoTestReport'
-  }
-
-  tasks.register('jacocoTestReport', JacocoReport) {
-    dependsOn tasks.withType(Test)
-
-    reports {
-      xml.required = true
-      html.required = true
-    }
-
-    if (project.hasProperty('sourceSets')) {
-      sourceDirectories.setFrom files(sourceSets.main.allSource.srcDirs)
-      classDirectories.setFrom files(sourceSets.main.output)
-    }
-
-    executionData.setFrom fileTree(project.buildDir)
-      .include('jacoco/*.exec','outputs/unit_test_code_coverage/*.exec')
-  }
-}
-"@ | Set-Content -Path $initFile -Encoding UTF8
-
-          cmd /c "gradlew.bat clean test --no-daemon --init-script `"$initFile`""
-        '''
-      }
-      post {
-        always {
-          junit allowEmptyResults: true, testResults: '**\\build\\test-results\\test\\*.xml'
-          script {
-            def reportPath = 'build/reports/jacoco/test/html'
-            if (fileExists(reportPath)) {
-              publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: reportPath,
-                reportFiles: 'index.html',
-                reportName: 'JaCoCo Report'
-              ])
-            } else {
-              echo "JaCoCo HTML report not found at ${reportPath}"
-            }
+        script {
+          if (isUnix()) {
+            sh 'chmod +x mvnw'
+            sh './mvnw -B clean test'
+          } else {
+            bat 'mvnw.cmd -B clean test'
           }
         }
       }
     }
 
-    stage('Generate Artifact') {
+    stage('Jacoco Report') {
       steps {
-        bat 'gradlew.bat build -x test --no-daemon'
-      }
-      post {
-        success {
-          archiveArtifacts artifacts: 'build\\libs\\*.jar', fingerprint: true
+        script {
+
+          if (isUnix()) {
+            sh './mvnw -B jacoco:report'
+          } else {
+            bat 'mvnw.cmd -B jacoco:report'
+          }
         }
+
+        publishHTML(target: [
+          allowMissing: false,
+          alwaysLinkToLastBuild: true,
+          keepAll: true,
+          reportDir: 'target/site/jacoco',
+          reportFiles: 'index.html',
+          reportName: 'JaCoCo Coverage Report'
+        ])
       }
     }
 
+    stage('Package Artifact') {
+      steps {
+        script {
+          if (isUnix()) {
+            sh './mvnw -B -DskipTests package'
+          } else {
+            bat 'mvnw.cmd -B -DskipTests package'
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+
+      archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+    }
   }
 }
