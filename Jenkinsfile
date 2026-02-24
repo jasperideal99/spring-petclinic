@@ -5,43 +5,51 @@ pipeline {
     cron('H/5 * * * 1')
   }
 
-  options { timestamps() }
+  options {
+    timestamps()
+  }
 
   stages {
 
     stage('Checkout') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+      }
     }
 
     stage('JaCoCo Code Coverage') {
       steps {
-        bat '''
-          @echo off
-          set INIT_FILE=%WORKSPACE%\\jenkins-jacoco.gradle
+        powershell '''
+          $initFile = "$env:WORKSPACE\\jenkins-jacoco.gradle"
 
-          (
-            echo allprojects ^{
-            echo   apply plugin: 'jacoco'
-            echo   tasks.withType(Test).configureEach ^{
-            echo     finalizedBy 'jacocoTestReport'
-            echo   ^}
-            echo   tasks.register('jacocoTestReport', JacocoReport) ^{
-            echo     dependsOn tasks.withType(Test)
-            echo     reports ^{
-            echo       xml.required = true
-            echo       html.required = true
-            echo     ^}
-            echo     def mainSourceSets = project.hasProperty('sourceSets') ? sourceSets : null
-            echo     if (mainSourceSets != null) ^{
-            echo       sourceDirectories.setFrom files(mainSourceSets.main.allSource.srcDirs)
-            echo       classDirectories.setFrom files(mainSourceSets.main.output)
-            echo     ^}
-            echo     executionData.setFrom fileTree(project.buildDir).include("jacoco/*.exec","outputs/unit_test_code_coverage/*.exec")
-            echo   ^}
-            echo ^}
-          ) > "%INIT_FILE%"
+@"
+allprojects {
+  apply plugin: 'jacoco'
 
-          gradlew.bat clean test --no-daemon --init-script "%INIT_FILE%"
+  tasks.withType(Test) {
+    finalizedBy 'jacocoTestReport'
+  }
+
+  tasks.register('jacocoTestReport', JacocoReport) {
+    dependsOn tasks.withType(Test)
+
+    reports {
+      xml.required = true
+      html.required = true
+    }
+
+    if (project.hasProperty('sourceSets')) {
+      sourceDirectories.setFrom files(sourceSets.main.allSource.srcDirs)
+      classDirectories.setFrom files(sourceSets.main.output)
+    }
+
+    executionData.setFrom fileTree(project.buildDir)
+      .include('jacoco/*.exec','outputs/unit_test_code_coverage/*.exec')
+  }
+}
+"@ | Set-Content -Path $initFile -Encoding UTF8
+
+          cmd /c "gradlew.bat clean test --no-daemon --init-script `"$initFile`""
         '''
       }
       post {
@@ -59,14 +67,14 @@ pipeline {
                 reportName: 'JaCoCo Report'
               ])
             } else {
-              echo "JaCoCo HTML report not found at ${reportPath} (skipping publishHTML)."
+              echo "JaCoCo HTML report not found at ${reportPath}"
             }
           }
         }
       }
     }
 
-    stage('Package Artifact') {
+    stage('Generate Artifact') {
       steps {
         bat 'gradlew.bat build -x test --no-daemon'
       }
@@ -76,5 +84,6 @@ pipeline {
         }
       }
     }
+
   }
 }
