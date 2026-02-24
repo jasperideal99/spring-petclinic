@@ -13,14 +13,40 @@ pipeline {
       steps { checkout scm }
     }
 
-    stage('Build + Test + JaCoCo') {
+    stage('JaCoCo Code Coverage') {
       steps {
-        bat 'gradlew.bat clean test jacocoTestReport --no-daemon'
+        bat '''
+          @echo off
+          set INIT_FILE=%WORKSPACE%\\jenkins-jacoco.gradle
+
+          (
+            echo allprojects ^{
+            echo   apply plugin: 'jacoco'
+            echo   tasks.withType(Test).configureEach ^{
+            echo     finalizedBy 'jacocoTestReport'
+            echo   ^}
+            echo   tasks.register('jacocoTestReport', JacocoReport) ^{
+            echo     dependsOn tasks.withType(Test)
+            echo     reports ^{
+            echo       xml.required = true
+            echo       html.required = true
+            echo     ^}
+            echo     def mainSourceSets = project.hasProperty('sourceSets') ? sourceSets : null
+            echo     if (mainSourceSets != null) ^{
+            echo       sourceDirectories.setFrom files(mainSourceSets.main.allSource.srcDirs)
+            echo       classDirectories.setFrom files(mainSourceSets.main.output)
+            echo     ^}
+            echo     executionData.setFrom fileTree(project.buildDir).include("jacoco/*.exec","outputs/unit_test_code_coverage/*.exec")
+            echo   ^}
+            echo ^}
+          ) > "%INIT_FILE%"
+
+          gradlew.bat clean test --no-daemon --init-script "%INIT_FILE%"
+        '''
       }
       post {
         always {
           junit allowEmptyResults: true, testResults: '**\\build\\test-results\\test\\*.xml'
-
           script {
             def reportPath = 'build/reports/jacoco/test/html'
             if (fileExists(reportPath)) {
